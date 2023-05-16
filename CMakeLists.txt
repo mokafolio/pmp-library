@@ -57,18 +57,16 @@ if(PMP_BUILD_VIS)
   if(NOT EMSCRIPTEN)
     add_subdirectory(${GLFW_SOURCE_DIR} ${GLEW_SOURCE_DIR})
 
-    include_directories(${GLFW_SOURCE_DIR}/include ${GLFW_SOURCE_DIR}/deps
-                        ${GLEW_SOURCE_DIR}/include)
-
     add_definitions(-DGLEW_STATIC)
     add_library(glew STATIC ${GLEW_SOURCE_DIR}/src/glew.c
                             ${GLEW_SOURCE_DIR}/include)
     set_property(TARGET glew PROPERTY POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(glew PUBLIC ${GLEW_SOURCE_DIR}/include
+                                           ${GLFW_SOURCE_DIR}/include)
     target_link_libraries(glew ${GLFW_LIBRARIES})
   endif()
 
   # setup IMGUI
-  include_directories(${IMGUI_SOURCE_DIR})
   add_subdirectory(${IMGUI_SOURCE_DIR})
 endif(PMP_BUILD_VIS)
 
