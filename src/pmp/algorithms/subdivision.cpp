@@ -192,6 +192,7 @@ void loop_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
     auto points_ = mesh.vertex_property<Point>("v:point");
     auto vfeature_ = mesh.get_vertex_property<bool>("v:feature");
     auto efeature_ = mesh.get_edge_property<bool>("e:feature");
+    auto uvs_ = mesh.get_halfedge_property<TexCoord>("h:tex");
 
     if (!mesh.is_triangle_mesh())
     {
@@ -287,6 +288,12 @@ void loop_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
         }
     }
 
+    HalfedgeProperty<TexCoord> heuvs;
+    if (uvs_)
+    {
+        heuvs = mesh.add_halfedge_property<TexCoord>("loop:euvs");
+    }
+
     // compute edge positions
     for (auto e : mesh.edges())
     {
@@ -310,6 +317,19 @@ void loop_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
             p += points_[mesh.to_vertex(mesh.next_halfedge(h1))];
             p *= 0.125;
             epoint[e] = p;
+        }
+
+        if (uvs_)
+        {
+            auto h0 = mesh.halfedge(e, 0);
+            auto h1 = mesh.halfedge(e, 1);
+            auto a_from = uvs_[mesh.prev_halfedge(h0)];
+            auto a_to = uvs_[h0];
+            auto b_from = uvs_[mesh.prev_halfedge(h1)];
+            auto b_to = uvs_[h1];
+            //TODO: Is there a better factor than 0.5 based on how loop distributes the edge points?
+            heuvs[h0] = (a_from + a_to) * Scalar(0.5);
+            heuvs[h1] = (b_from + b_to) * Scalar(0.5);
         }
     }
 
@@ -338,7 +358,27 @@ void loop_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
         // normal edge
         else
         {
-            mesh.insert_vertex(e, epoint[e]);
+            if (uvs_)
+            {
+                auto h0 = mesh.halfedge(e, 0);
+                auto h1 = mesh.halfedge(e, 1);
+
+                //need to cache the original he uvs before overwriting them
+                auto tmpa_old = uvs_[h1];
+                auto tmpb_old = uvs_[h0];
+
+                auto nh = mesh.insert_vertex(e, epoint[e]);
+
+                uvs_[nh] = heuvs[h1];
+                uvs_[mesh.prev_halfedge(mesh.opposite_halfedge(nh))] =
+                    heuvs[h0];
+                uvs_[mesh.next_halfedge(nh)] = tmpa_old;
+                uvs_[mesh.opposite_halfedge(nh)] = tmpb_old;
+            }
+            else
+            {
+                mesh.insert_vertex(e, epoint[e]);
+            }
         }
     }
 
@@ -346,17 +386,34 @@ void loop_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
     Halfedge h;
     for (auto f : mesh.faces())
     {
-        h = mesh.halfedge(f);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
-        h = mesh.next_halfedge(h);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
-        h = mesh.next_halfedge(h);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
+        // face was a triangle
+        auto make_next_triangle = [&](pmp::Halfedge _start_halfedge) {
+            pmp::Halfedge h0 = _start_halfedge;
+            pmp::Halfedge h1 = mesh.next_halfedge(mesh.next_halfedge(h0));
+            auto nh = mesh.insert_edge(h0, h1);
+
+            if (uvs_)
+            {
+                uvs_[nh] = uvs_[h1];
+                uvs_[mesh.opposite_halfedge(nh)] = uvs_[h0];
+            }
+        };
+
+        auto h0 = mesh.halfedge(f);
+        make_next_triangle(h0);
+        h0 = mesh.next_halfedge(h0);
+        make_next_triangle(h0);
+        h0 = mesh.next_halfedge(h0);
+        make_next_triangle(h0);
     }
 
     // clean-up properties
     mesh.remove_vertex_property(vpoint);
     mesh.remove_edge_property(epoint);
+    if (heuvs)
+    {
+        mesh.remove_halfedge_property(heuvs);
+    }
 }
 
 void quad_tri_subdivision(SurfaceMesh& mesh, BoundaryHandling boundary_handling)
