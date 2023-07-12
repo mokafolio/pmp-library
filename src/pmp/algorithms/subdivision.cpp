@@ -6,11 +6,124 @@
 
 namespace pmp {
 
+namespace {
+void split_edge_uvs(SurfaceMesh& mesh, HalfedgeProperty<TexCoord>& orig_uvs,
+                    HalfedgeProperty<TexCoord>& new_uvs, Edge e, Scalar factor)
+{
+    auto h0 = mesh.halfedge(e, 0);
+    auto h1 = mesh.halfedge(e, 1);
+    auto a_from = orig_uvs[mesh.prev_halfedge(h0)];
+    auto a_to = orig_uvs[h0];
+    auto b_from = orig_uvs[mesh.prev_halfedge(h1)];
+    auto b_to = orig_uvs[h1];
+    new_uvs[h0] = (a_from + a_to) * Scalar(factor);
+    new_uvs[h1] = (b_from + b_to) * Scalar(factor);
+}
+
+TexCoord face_uv_centroid(SurfaceMesh& mesh, HalfedgeProperty<TexCoord>& uvs,
+                          Face f)
+{
+    TexCoord uv_cen{0.0, 0.0};
+    Scalar n{0};
+    for (auto he : mesh.halfedges(f))
+    {
+        uv_cen += uvs[he];
+        ++n;
+    }
+    uv_cen /= n;
+    return uv_cen;
+}
+
+void triangulate_subdivided_face(SurfaceMesh& mesh,
+                                 HalfedgeProperty<TexCoord>& uvs, Face f)
+{
+    auto make_next_triangle = [&](Halfedge he) {
+        Halfedge h0 = he;
+        Halfedge h1 = mesh.next_halfedge(mesh.next_halfedge(h0));
+        auto nh = mesh.insert_edge(h0, h1);
+
+        if (uvs)
+        {
+            uvs[nh] = uvs[h1];
+            uvs[mesh.opposite_halfedge(nh)] = uvs[h0];
+        }
+    };
+
+    auto h0 = mesh.halfedge(f);
+    make_next_triangle(h0);
+    h0 = mesh.next_halfedge(h0);
+    make_next_triangle(h0);
+    h0 = mesh.next_halfedge(h0);
+    make_next_triangle(h0);
+}
+
+void quadrangulate_subdivided_face(SurfaceMesh& mesh,
+                                   HalfedgeProperty<TexCoord>& uvs, Point ct,
+                                   TexCoord uv_ct, Face f)
+{
+    auto h0 = mesh.halfedge(f);
+    auto other_corner_he = mesh.next_halfedge(mesh.next_halfedge(h0));
+    mesh.insert_edge(h0, mesh.next_halfedge(mesh.next_halfedge(h0)));
+
+    auto h1 = mesh.next_halfedge(h0);
+    auto h2 = mesh.insert_vertex(mesh.edge(h1), ct);
+
+    //set the new UV's for the resulting new half edges
+    if (uvs)
+    {
+        auto h3 = mesh.opposite_halfedge(h2);
+        uvs[h2] = uv_ct;
+        uvs[h3] = uvs[other_corner_he];
+        uvs[mesh.prev_halfedge(h3)] = uv_ct;
+        uvs[mesh.next_halfedge(h2)] = uvs[h0];
+    }
+
+    auto h = mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h1)));
+    while (h != h0)
+    {
+        auto he = mesh.insert_edge(h1, h);
+        if (uvs)
+        {
+            uvs[he] = uvs[h];
+            uvs[mesh.opposite_halfedge(he)] = uvs[h1];
+        }
+        h = mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h1)));
+    }
+}
+
+Halfedge insert_vertex_and_patch_uvs(SurfaceMesh& mesh,
+                                     HalfedgeProperty<TexCoord>& uvs,
+                                     const HalfedgeProperty<TexCoord>& new_uvs,
+                                     Edge e, const Point& v)
+{
+    if (uvs)
+    {
+        auto h0 = mesh.halfedge(e, 0);
+        auto h1 = mesh.halfedge(e, 1);
+
+        //need to cache the original he uvs before overwriting them
+        auto tmpa_old = uvs[h1];
+        auto tmpb_old = uvs[h0];
+
+        auto h = mesh.insert_vertex(e, v);
+
+        uvs[h] = new_uvs[h1];
+        uvs[mesh.prev_halfedge(mesh.opposite_halfedge(h))] = new_uvs[h0];
+        uvs[mesh.next_halfedge(h)] = tmpa_old;
+        uvs[mesh.opposite_halfedge(h)] = tmpb_old;
+        return h;
+    }
+
+    return mesh.insert_vertex(e, v);
+}
+} // namespace
+
 void catmull_clark_subdivision(SurfaceMesh& mesh)
 {
     auto points_ = mesh.vertex_property<Point>("v:point");
     auto vfeature_ = mesh.get_vertex_property<bool>("v:feature");
     auto efeature_ = mesh.get_edge_property<bool>("e:feature");
+    auto uvs_ = mesh.get_halfedge_property<TexCoord>("h:tex");
 
     // reserve memory
     size_t nv = mesh.n_vertices();
@@ -23,10 +136,24 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     auto epoint = mesh.add_edge_property<Point>("catmull:epoint");
     auto fpoint = mesh.add_face_property<Point>("catmull:fpoint");
 
+    HalfedgeProperty<TexCoord> new_uvs;
+    FaceProperty<TexCoord> fuvs;
+    if (uvs_)
+    {
+        new_uvs = mesh.add_halfedge_property<TexCoord>("catmull:nuvs");
+        fuvs = mesh.add_face_property<TexCoord>("catmull:fuvs");
+    }
+
     // compute face vertices
     for (auto f : mesh.faces())
     {
         fpoint[f] = centroid(mesh, f);
+
+        // calculate the centroid UV if necessary
+        if (uvs_)
+        {
+            fuvs[f] = face_uv_centroid(mesh, uvs_, f);
+        }
     }
 
     // compute edge vertices
@@ -49,6 +176,13 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
             p += fpoint[mesh.face(e, 1)];
             p *= 0.25f;
             epoint[e] = p;
+        }
+
+        if (uvs_)
+        {
+            //TODO: Is there a better factor than 0.5 based on how loop distributes the edge points for the interior edge case?
+            // Just splitting it in the middle seems to be what a lot of 3D tools such as Blender appear to be doing though.
+            split_edge_uvs(mesh, uvs_, new_uvs, e, 0.5);
         }
     }
 
@@ -134,10 +268,11 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // split edges
     for (auto e : mesh.edges())
     {
+        auto h = insert_vertex_and_patch_uvs(mesh, uvs_, new_uvs, e, epoint[e]);
+
         // feature edge?
         if (efeature_ && efeature_[e])
         {
-            auto h = mesh.insert_vertex(e, epoint[e]);
             auto v = mesh.to_vertex(h);
             auto e0 = mesh.edge(h);
             auto e1 = mesh.edge(mesh.next_halfedge(h));
@@ -146,35 +281,24 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
             efeature_[e0] = true;
             efeature_[e1] = true;
         }
-
-        // normal edge
-        else
-        {
-            mesh.insert_vertex(e, epoint[e]);
-        }
     }
 
     // split faces
     for (auto f : mesh.faces())
     {
-        auto h0 = mesh.halfedge(f);
-        mesh.insert_edge(h0, mesh.next_halfedge(mesh.next_halfedge(h0)));
-
-        auto h1 = mesh.next_halfedge(h0);
-        mesh.insert_vertex(mesh.edge(h1), fpoint[f]);
-
-        auto h = mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h1)));
-        while (h != h0)
-        {
-            mesh.insert_edge(h1, h);
-            h = mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h1)));
-        }
+        quadrangulate_subdivided_face(mesh, uvs_, fpoint[f],
+                                      fuvs ? fuvs[f] : TexCoord{}, f);
     }
 
     // clean-up properties
     mesh.remove_vertex_property(vpoint);
     mesh.remove_edge_property(epoint);
     mesh.remove_face_property(fpoint);
+    if (uvs_)
+    {
+        mesh.remove_face_property(fuvs);
+        mesh.remove_halfedge_property(new_uvs);
+    }
 }
 
 void loop_subdivision(SurfaceMesh& mesh)
@@ -182,6 +306,7 @@ void loop_subdivision(SurfaceMesh& mesh)
     auto points_ = mesh.vertex_property<Point>("v:point");
     auto vfeature_ = mesh.get_vertex_property<bool>("v:feature");
     auto efeature_ = mesh.get_edge_property<bool>("e:feature");
+    auto uvs_ = mesh.get_halfedge_property<TexCoord>("h:tex");
 
     if (!mesh.is_triangle_mesh())
     {
@@ -269,6 +394,12 @@ void loop_subdivision(SurfaceMesh& mesh)
         }
     }
 
+    HalfedgeProperty<TexCoord> new_uvs;
+    if (uvs_)
+    {
+        new_uvs = mesh.add_halfedge_property<TexCoord>("loop:nuvs");
+    }
+
     // compute edge positions
     for (auto e : mesh.edges())
     {
@@ -293,6 +424,13 @@ void loop_subdivision(SurfaceMesh& mesh)
             p *= 0.125;
             epoint[e] = p;
         }
+
+        if (uvs_)
+        {
+            //TODO: Is there a better factor than 0.5 based on how loop distributes the edge points for the interior edge case?
+            // Just splitting it in the middle seems to be what a lot of 3D tools such as Blender appear to be doing though.
+            split_edge_uvs(mesh, uvs_, new_uvs, e, 0.5);
+        }
     }
 
     // set new vertex positions
@@ -304,10 +442,11 @@ void loop_subdivision(SurfaceMesh& mesh)
     // insert new vertices on edges
     for (auto e : mesh.edges())
     {
+        auto h = insert_vertex_and_patch_uvs(mesh, uvs_, new_uvs, e, epoint[e]);
+
         // feature edge?
         if (efeature_ && efeature_[e])
         {
-            auto h = mesh.insert_vertex(e, epoint[e]);
             auto v = mesh.to_vertex(h);
             auto e0 = mesh.edge(h);
             auto e1 = mesh.edge(mesh.next_halfedge(h));
@@ -316,29 +455,22 @@ void loop_subdivision(SurfaceMesh& mesh)
             efeature_[e0] = true;
             efeature_[e1] = true;
         }
-
-        // normal edge
-        else
-        {
-            mesh.insert_vertex(e, epoint[e]);
-        }
     }
 
     // split faces
     Halfedge h;
     for (auto f : mesh.faces())
     {
-        h = mesh.halfedge(f);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
-        h = mesh.next_halfedge(h);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
-        h = mesh.next_halfedge(h);
-        mesh.insert_edge(h, mesh.next_halfedge(mesh.next_halfedge(h)));
+        triangulate_subdivided_face(mesh, uvs_, f);
     }
 
     // clean-up properties
     mesh.remove_vertex_property(vpoint);
     mesh.remove_edge_property(epoint);
+    if (new_uvs)
+    {
+        mesh.remove_halfedge_property(new_uvs);
+    }
 }
 
 void quad_tri_subdivision(SurfaceMesh& mesh)
@@ -346,35 +478,23 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
     auto points_ = mesh.vertex_property<Point>("v:point");
     auto uvs_ = mesh.get_halfedge_property<TexCoord>("h:tex");
 
+    HalfedgeProperty<TexCoord> new_uvs;
+    if (uvs_)
+    {
+        new_uvs = mesh.add_halfedge_property<TexCoord>("quad_tri:new_uvs");
+    }
+
     // split each edge evenly into two parts
     for (auto e : mesh.edges())
     {
         if (uvs_)
         {
-            auto ha = mesh.halfedge(e, 0);
-            auto hb = mesh.halfedge(e, 1);
-
-            auto a_from = uvs_[mesh.prev_halfedge(ha)];
-            auto a_to = uvs_[ha];
-            auto b_from = uvs_[mesh.prev_halfedge(hb)];
-            auto b_to = uvs_[hb];
-            auto nhe =
-                mesh.insert_vertex(e, 0.5f * (points_[mesh.vertex(e, 0)] +
-                                              points_[mesh.vertex(e, 1)]));
-            auto ohe = mesh.opposite_halfedge(nhe);
-            auto auv = (a_from + a_to) * 0.5f;
-            auto buv = (b_from + b_to) * 0.5f;
-
-            uvs_[nhe] = buv;
-            uvs_[mesh.next_halfedge(nhe)] = b_to;
-            uvs_[mesh.prev_halfedge(ohe)] = auv;
-            uvs_[ohe] = a_to;
+            split_edge_uvs(mesh, uvs_, new_uvs, e, 0.5);
         }
-        else
-        {
-            mesh.insert_vertex(e, 0.5f * (points_[mesh.vertex(e, 0)] +
-                                          points_[mesh.vertex(e, 1)]));
-        }
+
+        insert_vertex_and_patch_uvs(
+            mesh, uvs_, new_uvs, e,
+            0.5f * (points_[mesh.vertex(e, 0)] + points_[mesh.vertex(e, 1)]));
     }
 
     // subdivide faces without repositioning
@@ -384,75 +504,22 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
         if (f_val == 3)
         {
             // face was a triangle
-            auto make_next_triangle = [&](pmp::Halfedge _start_halfedge) {
-                pmp::Halfedge h0 = _start_halfedge;
-                pmp::Halfedge h1 = mesh.next_halfedge(mesh.next_halfedge(h0));
-                auto nh = mesh.insert_edge(h0, h1);
-
-                if (uvs_)
-                {
-                    uvs_[nh] = uvs_[h1];
-                    uvs_[mesh.opposite_halfedge(nh)] = uvs_[h0];
-                }
-            };
-
-            auto h0 = mesh.halfedge(f);
-            make_next_triangle(h0);
-            h0 = mesh.next_halfedge(h0);
-            make_next_triangle(h0);
-            h0 = mesh.next_halfedge(h0);
-            make_next_triangle(h0);
+            triangulate_subdivided_face(mesh, uvs_, f);
         }
         else
         {
             // quadrangulate the rest
-            auto h0 = mesh.halfedge(f);
-            auto h1 = mesh.next_halfedge(mesh.next_halfedge(h0));
-            //NOTE: It's important to calculate the centroid before inserting the new edge
+
+            //face centroid
             auto cen = pmp::centroid(mesh, f);
 
             // calculate the centroid UV if necessary
-            pmp::TexCoord uv_cen{0.0f, 0.0f};
+            TexCoord uv_cen;
             if (uvs_)
             {
-                pmp::Scalar n{0};
-                auto hedges = mesh.halfedges(f);
-                for (auto he : hedges)
-                {
-                    uv_cen += uvs_[he];
-                    ++n;
-                }
-                uv_cen /= n;
+                uv_cen = face_uv_centroid(mesh, uvs_, f);
             }
-
-            //insert the new edge and centroid vertex
-            auto h2 = mesh.insert_edge(h0, h1);
-            auto h3 = mesh.insert_vertex(mesh.edge(h2), cen);
-
-            //set the new UV's for the resulting new half edges
-            if (uvs_)
-            {
-                uvs_[h2] = uv_cen;
-                uvs_[mesh.opposite_halfedge(h2)] = uvs_[h0];
-                uvs_[h3] = uv_cen;
-                uvs_[mesh.opposite_halfedge(h3)] = uvs_[h1];
-            }
-
-            auto h =
-                mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h2)));
-            while (h != h0)
-            {
-                auto nh = mesh.insert_edge(h2, h);
-
-                if (uvs_)
-                {
-                    uvs_[nh] = uvs_[h];
-                    uvs_[mesh.opposite_halfedge(nh)] = uvs_[h2];
-                }
-
-                h = mesh.next_halfedge(
-                    mesh.next_halfedge(mesh.next_halfedge(h2)));
-            }
+            quadrangulate_subdivided_face(mesh, uvs_, cen, uv_cen, f);
         }
     }
 
@@ -545,6 +612,10 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
     }
 
     mesh.remove_vertex_property(new_pos);
+    if (uvs_)
+    {
+        mesh.remove_halfedge_property(new_uvs);
+    }
 }
 
 } // namespace pmp
