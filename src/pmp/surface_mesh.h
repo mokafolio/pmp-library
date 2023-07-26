@@ -11,6 +11,8 @@
 #include "pmp/properties.h"
 #include "pmp/io/io_flags.h"
 
+#define CHECK_CANCEL(sm) if(sm.cancel_process_) { return; }
+
 namespace pmp {
 
 //! \addtogroup core
@@ -1968,6 +1970,7 @@ public:
         return Face(static_cast<IndexType>(faces_size()) - 1);
     }
 
+    bool cancel_process_{false};
     //!@}
 
 private:

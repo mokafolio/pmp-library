@@ -338,6 +338,8 @@ void Remeshing::uniform_remeshing(Scalar edge_length, unsigned int iterations,
 
     for (unsigned int i = 0; i < iterations; ++i)
     {
+        CHECK_CANCEL(mesh_)
+        
         split_long_edges();
 
         vertex_normals(mesh_);
