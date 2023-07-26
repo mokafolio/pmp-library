@@ -18,6 +18,8 @@
 #include "pmp/properties.h"
 #include "pmp/exceptions.h"
 
+#define CHECK_CANCEL(sm) if(sm.cancel_process_) { return; }
+
 namespace pmp {
 
 struct IOFlags;
@@ -1938,6 +1940,7 @@ public:
         return Face(static_cast<IndexType>(faces_size()) - 1);
     }
 
+    bool cancel_process_{false};
     //!@}
 
 private:
