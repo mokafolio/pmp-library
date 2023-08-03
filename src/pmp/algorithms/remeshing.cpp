@@ -269,6 +269,9 @@ private:
     void tangential_smoothing(unsigned int iterations);
     void remove_caps();
 
+    // are texture seams preserved if h is collapsed?
+    bool texcoord_check(Halfedge h);
+
     Point minimize_squared_areas(Vertex v);
     Point weighted_centroid(Vertex v);
 
@@ -299,6 +302,7 @@ private:
 
     bool has_feature_vertices_{false};
     bool has_feature_edges_{false};
+    bool has_tex_coords_{false};
     VertexProperty<Point> points_;
     VertexProperty<Point> vnormal_;
     VertexProperty<bool> vfeature_;
@@ -306,6 +310,11 @@ private:
     VertexProperty<bool> vlocked_;
     EdgeProperty<bool> elocked_;
     VertexProperty<Scalar> vsizing_;
+    HalfedgeProperty<TexCoord> htex_coords_;
+    HalfedgeProperty<TexCoord> htex_new_coords_;
+    EdgeProperty<bool> texture_seams_;
+    Scalar seam_threshold_{1e-2};
+    Scalar seam_angle_deviation_{0.99};
 
     VertexProperty<Point> refpoints_;
     VertexProperty<Point> refnormals_;
@@ -325,6 +334,7 @@ Remeshing::Remeshing(SurfaceMesh& mesh)
 
     has_feature_vertices_ = mesh_.has_vertex_property("v:feature");
     has_feature_edges_ = mesh_.has_edge_property("e:feature");
+    has_tex_coords_ = mesh_.has_halfedge_property("h:tex");
 }
 
 void Remeshing::uniform_remeshing(Scalar edge_length, unsigned int iterations,
@@ -333,12 +343,13 @@ void Remeshing::uniform_remeshing(Scalar edge_length, unsigned int iterations,
     uniform_ = true;
     use_projection_ = use_projection;
     target_edge_length_ = edge_length;
+    seam_angle_deviation_ = (180.0 - 1.0) / 180.0;
 
     preprocessing();
 
     for (unsigned int i = 0; i < iterations; ++i)
     {
-        split_long_edges();
+        // split_long_edges();
 
         vertex_normals(mesh_);
 
@@ -392,6 +403,35 @@ void Remeshing::preprocessing()
     vlocked_ = mesh_.add_vertex_property<bool>("v:locked", false);
     elocked_ = mesh_.add_edge_property<bool>("e:locked", false);
     vsizing_ = mesh_.add_vertex_property<Scalar>("v:sizing");
+
+    if (has_tex_coords_)
+    {
+        //TODO: Share this implementation with what is happening in Decimation
+        htex_coords_ = mesh_.get_halfedge_property<TexCoord>("h:tex");
+        htex_new_coords_ =
+            mesh_.add_halfedge_property<TexCoord>("remeshing:tex");
+        texture_seams_ = mesh_.edge_property<bool>("e:seam", false);
+        for (auto e : mesh_.edges())
+        {
+            // htex_coords_ are stored in halfedge pointing towards a vertex
+            Halfedge h0 = mesh_.halfedge(e, 0);
+            Halfedge h1 = mesh_.halfedge(e, 1);     //opposite halfedge
+            Halfedge h0p = mesh_.prev_halfedge(h0); // start point edge 0
+            Halfedge h1p = mesh_.prev_halfedge(h1); // start point edge 1
+
+            // if start or end points differ more than seam_threshold
+            // the corresponding edge is a texture seam
+            if (norm(htex_coords_[h1] - htex_coords_[h0p]) > seam_threshold_ ||
+                norm(htex_coords_[h0] - htex_coords_[h1p]) > seam_threshold_)
+            {
+                texture_seams_[e] = true;
+            }
+            else
+            {
+                texture_seams_[e] = false;
+            }
+        }
+    }
 
     // lock unselected vertices if some vertices are selected
     auto vselected = mesh_.get_vertex_property<bool>("v:selected");
@@ -571,6 +611,94 @@ void Remeshing::preprocessing()
     }
 }
 
+bool Remeshing::texcoord_check(Halfedge h)
+{
+    auto texcoords = mesh_.get_halfedge_property<TexCoord>("h:tex");
+    if (!texcoords)
+    {
+        // no texture coordinates -> skip texture seam tests
+        return true;
+    }
+
+    auto texture_seams = mesh_.edge_property<bool>("e:seam");
+    if (!texture_seams)
+    {
+        // no seams found -> skip seam tests
+        return true;
+    }
+
+    Halfedge o(mesh_.opposite_halfedge(h));
+    Vertex v0(mesh_.to_vertex(o));
+
+    if (!texture_seams[mesh_.edge(h)])
+    {
+        // v0v1 is not a texture seam
+        for (auto he : mesh_.halfedges(v0))
+        {
+            if (he == h)
+                continue;
+            // Check if v0 is part of a texture seam
+            // If yes, v0 must not be moved
+            if (texture_seams[mesh_.edge(he)])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // count number of adjacent texture seam edges
+    int nr_seam_edges = 0;
+    for (auto he : mesh_.halfedges(v0))
+    {
+        if (texture_seams[mesh_.edge(he)])
+        {
+            nr_seam_edges++;
+        }
+    }
+
+    // if there are more than 2 seam edges at point v0
+    // -> v0 must not be moved
+    if (nr_seam_edges > 2)
+    {
+        return false;
+    }
+
+    Halfedge seam1 = h, seam2 = mesh_.prev_halfedge(h);
+    while (seam2.idx() != o.idx())
+    {
+        if (texture_seams[mesh_.edge(seam2)])
+        {
+            auto s1 = normalize(texcoords[seam1] -
+                                texcoords[mesh_.prev_halfedge(seam1)]);
+            auto s2 = normalize(texcoords[seam2] -
+                                texcoords[mesh_.prev_halfedge(seam2)]);
+
+            // opposite uvs
+            Halfedge o_seam1 = mesh_.opposite_halfedge(seam1);
+            Halfedge o_seam2 = mesh_.opposite_halfedge(seam2);
+            auto o1 = normalize(texcoords[o_seam1] -
+                                texcoords[mesh_.prev_halfedge(o_seam1)]);
+            auto o2 = normalize(texcoords[o_seam2] -
+                                texcoords[mesh_.prev_halfedge(o_seam2)]);
+
+            // check if the angle between the seam edge to be collapsed and the
+            // seam edge prolonged is smaller than the allowed deviation
+            if (dot(s1, s2) < seam_angle_deviation_ ||
+                dot(o1, o2) < seam_angle_deviation_)
+            {
+                // angle is too large -> don't collapse this edge
+                return false;
+            }
+        }
+        seam2 = mesh_.prev_halfedge(mesh_.opposite_halfedge(seam2));
+    }
+
+    // passed all tests
+    return true;
+}
+
 void Remeshing::postprocessing()
 {
     // remove properties
@@ -647,6 +775,7 @@ void Remeshing::split_long_edges()
 
     for (ok = false, i = 0; !ok && i < 10; ++i)
     {
+        break;
         ok = true;
 
         for (auto e : mesh_.edges())
@@ -662,8 +791,87 @@ void Remeshing::split_long_edges()
                 is_feature = efeature_[e];
                 is_boundary = mesh_.is_boundary(e);
 
-                vnew = mesh_.add_vertex((p0 + p1) * 0.5f);
-                mesh_.split(e, vnew);
+                if (!has_tex_coords_)
+                {
+                    vnew = mesh_.add_vertex((p0 + p1) * 0.5f);
+                    mesh_.split(e, vnew);
+                }
+                else
+                {
+                    printf("a\n");
+                    // auto h0 = mesh_.halfedge(e, 0);
+                    // auto h1 = mesh_.halfedge(e, 1);
+
+                    // auto a_from = htex_coords_[mesh_.prev_halfedge(h0)];
+                    // auto a_to = htex_coords_[h0];
+                    // auto b_from = htex_coords_[mesh_.prev_halfedge(h1)];
+                    // auto b_to = htex_coords_[h1];
+                    // auto new_uvs_a = (a_from + a_to) * Scalar(0.5);
+                    // auto new_uvs_b = (b_from + b_to) * Scalar(0.5);
+                    //
+                    // //need to cache the original he uvs before overwriting them
+                    // auto tmpa_old = htex_coords_[h1];
+                    // auto tmpb_old = htex_coords_[h0];
+                    // printf("b\n");
+
+                    //TODO: Use split and then adjust halfedge uvs
+                    // auto h = mesh_.insert_vertex(e, (p0 + p1) * 0.5f);
+                    // vnew = mesh_.to_vertex(h);
+
+                    vnew = mesh_.add_vertex((p0 + p1) * 0.5f);
+                    auto h = mesh_.split(e, vnew);
+                    auto oh = mesh_.opposite_halfedge(h);
+                    if (is_boundary)
+                    {
+                        // auto h2 = mesh_.next_halfedge(h);
+                        // auto h3 = mesh_.opposite_halfedge(h2);
+                        // auto h4 = mesh_.next_halfedge(h3);
+                        // auto h5 = mesh_.opposite_halfedge(h4);
+
+                        // htex_coords_[h] = new_uvs_a;
+                        // htex_coords_[h5] = new_uvs_b;
+                        // htex_coords_[oh] = new_uvs_a;
+                        // htex_coords_[h5] = new_uvs_a;
+                    }
+                    else
+                    {
+                        auto h2 = mesh_.next_halfedge(h);
+                        auto h3 = mesh_.opposite_halfedge(h2);
+                        auto h4 = mesh_.next_halfedge(h3);
+                        auto h5 = mesh_.opposite_halfedge(h4);
+                        auto h6 = mesh_.next_halfedge(h5);
+                        auto h7 = mesh_.opposite_halfedge(h5);
+
+                        // htex_coords_[h] = new_uvs_a;
+                        // htex_coords_[h2] = htex_coords_[mesh_.opposite_halfedge(
+                        //     mesh_.next_halfedge(h2))];
+                        // htex_coords_[h3] = new_uvs_a;
+                        // htex_coords_[h4] = tmpa_old;
+                        // htex_coords_[h5] = new_uvs_b;
+                        // htex_coords_[h6] = htex_coords_[mesh_.opposite_halfedge(
+                        //     mesh_.next_halfedge(h6))];
+                        // htex_coords_[h7] = new_uvs_b;
+                        // htex_coords_[oh] = tmpb_old;
+
+                        auto dummy = TexCoord{0.0f, 0.0f};
+                        htex_coords_[h] = dummy;
+                        htex_coords_[h2] = dummy;
+                        htex_coords_[h3] = dummy;
+                        htex_coords_[h4] = dummy;
+                        htex_coords_[h5] = dummy;
+                        htex_coords_[h6] = dummy;
+                        htex_coords_[h7] = dummy;
+                        htex_coords_[oh] = dummy;
+                        printf("argh");
+                    }
+
+                    // htex_coords_[h] = new_uvs_b;
+                    // htex_coords_[mesh_.prev_halfedge(
+                    //     mesh_.opposite_halfedge(h))] = new_uvs_a;
+                    // htex_coords_[mesh_.next_halfedge(h)] = tmpa_old;
+                    // htex_coords_[mesh_.opposite_halfedge(h)] = tmpb_old;
+                    printf("c\n");
+                }
 
                 // need normal or sizing for adaptive refinement
                 vnormal_[vnew] = vertex_normal(mesh_, vnew);
@@ -764,7 +972,8 @@ void Remeshing::collapse_short_edges()
                         hcol10 = false;
 
                     // topological rules
-                    bool collapse_ok = mesh_.is_collapse_ok(h01);
+                    bool collapse_ok =
+                        mesh_.is_collapse_ok(h01) && texcoord_check(h01);
 
                     if (hcol01)
                         hcol01 = collapse_ok;
@@ -779,6 +988,11 @@ void Remeshing::collapse_short_edges()
                         else
                             hcol01 = false;
                     }
+
+                    auto fix_collapsed_uv = [&](Halfedge _he) {
+                        htex_coords_[_he] = htex_coords_[mesh_.prev_halfedge(
+                            mesh_.opposite_halfedge(_he))];
+                    };
 
                     // try v1 -> v0
                     if (hcol10)
@@ -795,7 +1009,35 @@ void Remeshing::collapse_short_edges()
 
                         if (hcol10)
                         {
+                            auto vstart = mesh_.to_vertex(h10);
+                            auto vend = mesh_.to_vertex(
+                                mesh_.next_halfedge(mesh_.opposite_halfedge(
+                                    mesh_.prev_halfedge(h10))));
                             mesh_.collapse(h10);
+                            assert(mesh_.is_deleted(e));
+                            assert(mesh_.is_valid(h10));
+                            // fix_collapsed_uv(h10);
+                            // fix_collapsed_uv(h01);
+
+                            auto ne = mesh_.find_edge(vstart, vend);
+                            printf("hes %i %i %i %i\n",
+                                   mesh_.halfedge(ne, 0).idx(),
+                                   mesh_.halfedge(ne, 1).idx(), h10.idx(),
+                                   h01.idx());
+                            // auto he = mesh_.next_halfedge(h10);
+                            // while (he != h10)
+                            // {
+                            //     printf("HE %i %i %i %i\n", he.idx(), h10.idx(),
+                            //            mesh_.halfedge(ne, 0).idx(),
+                            //            mesh_.halfedge(ne, 1).idx());
+                            //     he = mesh_.next_halfedge(he);
+                            // }
+                            assert(ne.is_valid());
+                            fix_collapsed_uv(mesh_.halfedge(ne, 0));
+                            fix_collapsed_uv(mesh_.halfedge(ne, 1));
+
+                            // auto v = mesh_.to_vertex(h10);
+                            // mesh_.position(v) = pmp::vec3{0.0f};
                             ok = false;
                         }
                     }
@@ -816,6 +1058,14 @@ void Remeshing::collapse_short_edges()
                         if (hcol01)
                         {
                             mesh_.collapse(h01);
+                            assert(mesh_.is_deleted(e));
+                            assert(mesh_.is_valid(h01));
+                            // fix_collapsed_uv(h01);
+                            // fix_collapsed_uv(h10);
+                            // auto v = mesh_.to_vertex(h01);
+                            // mesh_.position(v) = pmp::vec3{0.0f};
+
+                            assert(false);
                             ok = false;
                         }
                     }
@@ -850,7 +1100,7 @@ void Remeshing::flip_edges()
 
         for (auto e : mesh_.edges())
         {
-            if (!elocked_[e] && !efeature_[e])
+            if (!elocked_[e] && !efeature_[e] && !texture_seams_[e])
             {
                 h = mesh_.halfedge(e, 0);
                 v0 = mesh_.to_vertex(h);

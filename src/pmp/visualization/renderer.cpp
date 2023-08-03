@@ -743,9 +743,12 @@ void Renderer::tesselate(const std::vector<vec3>& points,
     triangles.clear();
     triangles.reserve(n - 2);
 
+    printf("a\n");
+
     // triangle? nothing to do
     if (n == 3)
     {
+        printf("tri\n");
         triangles.emplace_back(0, 1, 2);
         return;
     }
@@ -753,6 +756,7 @@ void Renderer::tesselate(const std::vector<vec3>& points,
     // quad? simply compare to two options
     else if (n == 4)
     {
+        printf("quad\n");
         if (area(points[0], points[1], points[2]) +
                 area(points[0], points[2], points[3]) <
             area(points[0], points[1], points[3]) +
@@ -769,6 +773,7 @@ void Renderer::tesselate(const std::vector<vec3>& points,
         return;
     }
 
+    printf("ngon\n");
     // n-gon with n>4? compute triangulation by dynamic programming
     init_triangulation(n);
     int i, j, m, k, imin;
@@ -794,6 +799,10 @@ void Renderer::tesselate(const std::vector<vec3>& points,
             // find best split i < m < i+j
             for (m = i + 1; m < k; ++m)
             {
+                printf("tri %i %i %i\n", i, m, k);
+                printf("area %f %f %f\n", triangulation(i, m).area,
+                       triangulation(m, k).area,
+                       area(points[i], points[m], points[k]));
                 w = triangulation(i, m).area +
                     area(points[i], points[m], points[k]) +
                     triangulation(m, k).area;
@@ -805,6 +814,7 @@ void Renderer::tesselate(const std::vector<vec3>& points,
                 }
             }
 
+            printf("start %f end %i\n", wmin, imin);
             triangulation(i, k) = Triangulation(wmin, imin);
         }
     }
@@ -813,6 +823,7 @@ void Renderer::tesselate(const std::vector<vec3>& points,
     std::vector<ivec2> todo;
     todo.reserve(n);
     todo.emplace_back(0, n - 1);
+    printf("todo size %i %i\n", (int)todo.size(), n);
     while (!todo.empty())
     {
         ivec2 tri = todo.back();
@@ -821,6 +832,7 @@ void Renderer::tesselate(const std::vector<vec3>& points,
         int end = tri[1];
         if (end - start < 2)
             continue;
+        printf("start %i end %i\n", start, end);
         int split = triangulation(start, end).split;
 
         triangles.emplace_back(start, split, end);
