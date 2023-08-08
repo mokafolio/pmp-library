@@ -105,7 +105,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # set default compiler flags for both gcc and clang
-set(COMMON_CXX_FLAGS "-pedantic -Wall -Wextra -Wshadow")
+set(COMMON_CXX_FLAGS "-pedantic -Wall -Wextra -Wshadow -Wno-range-loop-analysis")
 if(PMP_STRICT_COMPILATION)
   set(COMMON_CXX_FLAGS "${COMMON_CXX_FLAGS} -Werror")
 endif()
