@@ -635,6 +635,8 @@ void Decimation::decimate(unsigned int n_vertices)
     auto nv = mesh_.n_vertices();
     while (nv > n_vertices && !queue.empty())
     {
+        CHECK_CANCEL(mesh_)
+        
         // get 1st element
         auto v = queue.front();
         queue.pop_front();
