@@ -29,6 +29,7 @@ private:
     // mesh and properties
     SurfaceMesh& mesh_;
     VertexProperty<Point> points_;
+    HalfedgeProperty<TexCoord> texcoords_;
     std::vector<Halfedge> halfedges_;
     std::vector<Vertex> vertices_;
 
@@ -40,6 +41,7 @@ private:
 Triangulation::Triangulation(SurfaceMesh& mesh) : mesh_(mesh)
 {
     points_ = mesh_.vertex_property<Point>("v:point");
+    texcoords_ = mesh_.get_halfedge_property<TexCoord>("h:tex");
 }
 
 void Triangulation::triangulate(Face f)
@@ -181,7 +183,12 @@ bool Triangulation::insert_edge(int i, int j)
             h = mesh_.next_halfedge(h);
             if (mesh_.to_vertex(h) == v1)
             {
-                mesh_.insert_edge(h0, h);
+                auto nh = mesh_.insert_edge(h0, h);
+                if (texcoords_)
+                {
+                    texcoords_[nh] = texcoords_[h];
+                    texcoords_[mesh_.opposite_halfedge(nh)] = texcoords_[h0];
+                }
                 return true;
             }
         } while (h != h0);
@@ -195,7 +202,12 @@ bool Triangulation::insert_edge(int i, int j)
             h = mesh_.next_halfedge(h);
             if (mesh_.to_vertex(h) == v0)
             {
-                mesh_.insert_edge(h1, h);
+                auto nh = mesh_.insert_edge(h1, h);
+                if (texcoords_)
+                {
+                    texcoords_[nh] = texcoords_[h];
+                    texcoords_[mesh_.opposite_halfedge(nh)] = texcoords_[h1];
+                }
                 return true;
             }
         } while (h != h1);
