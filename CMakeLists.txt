@@ -16,6 +16,14 @@ option(PMP_STRICT_COMPILATION "Treat compiler warnings as errors" ON)
 option(PMP_BUILD_REGRESSIONS "Build the PMP regression test programs" OFF)
 option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
 
+if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+  message("THIS IS DASLGKAHSGLK")
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
+else()
+  message("THIS IS DASLGKAHSGLK 2")
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15)
+endif()
+
 # set output paths
 set(PROJECT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR})
