@@ -6,12 +6,13 @@
 
 #include <vector>
 #include <filesystem>
+#include <atomic>
 
 #include "pmp/types.h"
 #include "pmp/properties.h"
 #include "pmp/io/io_flags.h"
 
-#define CHECK_CANCEL(sm) if(sm.cancel_process_) { return; }
+#define CHECK_CANCEL(sm) if(sm.isOperationCanceled()) { return; }
 
 namespace pmp {
 
@@ -1970,7 +1971,24 @@ public:
         return Face(static_cast<IndexType>(faces_size()) - 1);
     }
 
-    bool cancel_process_{false};
+private:
+    std::atomic<bool> cancel_operation{false};
+
+public:
+    void resetCancelOperation() {
+        if (cancel_operation) {
+            cancel_operation = false;
+        }
+    }
+
+    void cancelOperation() {
+        cancel_operation = true;
+    }
+
+    bool isOperationCanceled() const {
+        return cancel_operation;
+    }
+
     //!@}
 
 private:

@@ -81,6 +81,9 @@ void quadrangulate_subdivided_face(SurfaceMesh& mesh,
     auto h = mesh.next_halfedge(mesh.next_halfedge(mesh.next_halfedge(h1)));
     while (h != h0)
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         auto he = mesh.insert_edge(h1, h);
         if (uvs)
         {
@@ -147,6 +150,10 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // compute face vertices
     for (auto f : mesh.faces())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         fpoint[f] = centroid(mesh, f);
 
         // calculate the centroid UV if necessary
@@ -159,6 +166,10 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // compute edge vertices
     for (auto e : mesh.edges())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         // boundary or feature edge?
         if (mesh.is_boundary(e) || (efeature_ && efeature_[e]))
         {
@@ -189,6 +200,10 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // compute new positions for old vertices
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         // isolated vertex?
         if (mesh.is_isolated(v))
         {
@@ -219,6 +234,10 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
 
             for (auto h : mesh.halfedges(v))
             {
+                if (mesh.isOperationCanceled()) {
+                    return;
+                }
+
                 if (efeature_[mesh.edge(h)])
                 {
                     p += points_[mesh.to_vertex(h)];
@@ -245,11 +264,19 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
             const Scalar k = mesh.valence(v);
             Point p(0, 0, 0);
 
-            for (auto vv : mesh.vertices(v))
+            for (auto vv : mesh.vertices(v)) {
+                if (mesh.isOperationCanceled()) {
+                    return;
+                }
                 p += points_[vv];
+            }
 
-            for (auto f : mesh.faces(v))
+            for (auto f : mesh.faces(v)) {
+                if (mesh.isOperationCanceled()) {
+                    return;
+                }
                 p += fpoint[f];
+            }
 
             p /= (k * k);
 
@@ -262,12 +289,18 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // assign new positions to old vertices
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         points_[v] = vpoint[v];
     }
 
     // split edges
     for (auto e : mesh.edges())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         auto h = insert_vertex_and_patch_uvs(mesh, uvs_, new_uvs, e, epoint[e]);
 
         // feature edge?
@@ -286,6 +319,9 @@ void catmull_clark_subdivision(SurfaceMesh& mesh)
     // split faces
     for (auto f : mesh.faces())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         quadrangulate_subdivided_face(mesh, uvs_, fpoint[f],
                                       fuvs ? fuvs[f] : TexCoord{}, f);
     }
@@ -327,6 +363,10 @@ void loop_subdivision(SurfaceMesh& mesh)
     // compute vertex positions
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         // isolated vertex?
         if (mesh.is_isolated(v))
         {
@@ -403,6 +443,10 @@ void loop_subdivision(SurfaceMesh& mesh)
     // compute edge positions
     for (auto e : mesh.edges())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         // boundary or feature edge?
         if (mesh.is_boundary(e) || (efeature_ && efeature_[e]))
         {
@@ -436,12 +480,20 @@ void loop_subdivision(SurfaceMesh& mesh)
     // set new vertex positions
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         points_[v] = vpoint[v];
     }
 
     // insert new vertices on edges
     for (auto e : mesh.edges())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         auto h = insert_vertex_and_patch_uvs(mesh, uvs_, new_uvs, e, epoint[e]);
 
         // feature edge?
@@ -461,6 +513,9 @@ void loop_subdivision(SurfaceMesh& mesh)
     Halfedge h;
     for (auto f : mesh.faces())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         triangulate_subdivided_face(mesh, uvs_, f);
     }
 
@@ -487,6 +542,10 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
     // split each edge evenly into two parts
     for (auto e : mesh.edges())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         if (uvs_)
         {
             split_edge_uvs(mesh, uvs_, new_uvs, e, 0.5);
@@ -500,6 +559,10 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
     // subdivide faces without repositioning
     for (auto f : mesh.faces())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         size_t f_val = mesh.valence(f) / 2;
         if (f_val == 3)
         {
@@ -528,6 +591,10 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
 
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
+
         if (mesh.is_boundary(v))
         {
             new_pos[v] = 0.5 * points_[v];
@@ -608,6 +675,9 @@ void quad_tri_subdivision(SurfaceMesh& mesh)
     // apply new positions to the mesh
     for (auto v : mesh.vertices())
     {
+        if (mesh.isOperationCanceled()) {
+            return;
+        }
         points_[v] = new_pos[v];
     }
 
