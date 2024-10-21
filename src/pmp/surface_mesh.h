@@ -12,7 +12,7 @@
 #include "pmp/properties.h"
 #include "pmp/io/io_flags.h"
 
-#define CHECK_CANCEL(sm) if(sm.isOperationCanceled()) { return; }
+#define CHECK_CANCEL(sm) if(sm.is_operation_canceled()) { return; }
 
 namespace pmp {
 
@@ -1972,21 +1972,19 @@ public:
     }
 
 private:
-    std::atomic<bool> cancel_operation{false};
+    std::atomic<bool> cancel_operation_{false};
 
 public:
-    void resetCancelOperation() {
-        if (cancel_operation) {
-            cancel_operation = false;
-        }
+    void reset_cancel_operation() {
+        cancel_operation_ = false;
     }
 
-    void cancelOperation() {
-        cancel_operation = true;
+    void cancel_operation() {
+        cancel_operation_ = true;
     }
 
-    bool isOperationCanceled() const {
-        return cancel_operation;
+    bool is_operation_canceled() const {
+        return cancel_operation_;
     }
 
     //!@}
