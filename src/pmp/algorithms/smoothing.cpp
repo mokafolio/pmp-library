@@ -41,13 +41,13 @@ void explicit_smoothing(SurfaceMesh& mesh, unsigned int iters,
     DenseMatrix X;
     coordinates_to_matrix(mesh, X);
 
-    MESH_CHECK_CANCEL(mesh)
+    MESH_CHECK_THROW_CANCEL(mesh)
 
     // perform some interations
     for (unsigned int i = 0; i < iters; ++i)
         X += L * X;
 
-    MESH_CHECK_CANCEL(mesh)
+    MESH_CHECK_THROW_CANCEL(mesh)
 
     // copy matrix back to vertex coordinates
     matrix_to_coordinates(X, mesh);

@@ -12,7 +12,10 @@
 #include "pmp/properties.h"
 #include "pmp/io/io_flags.h"
 
-#define MESH_CHECK_CANCEL(sm) if(sm.is_operation_canceled()) { return; }
+#define MESH_CHECK_THROW_CANCEL(sm) \
+    if (sm.is_operation_canceled()) { \
+        throw pmp::MeshOperationInterrupted("Mesh operation canceled."); \
+    }
 
 namespace pmp {
 

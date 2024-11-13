@@ -97,7 +97,7 @@ void setup_selector_matrix(const SurfaceMesh& mesh,
     int row = 0;
     for (auto v : mesh.vertices())
     {
-        MESH_CHECK_CANCEL(mesh)
+        MESH_CHECK_THROW_CANCEL(mesh)
         if (is_selected(v))
         {
             triplets.emplace_back(row++, v.idx(), 1.0);
