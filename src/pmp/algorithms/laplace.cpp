@@ -315,6 +315,7 @@ void setup_divmass_matrix(const SurfaceMesh& mesh, DiagonalMatrix& M)
     unsigned int nt = 0;
     for (auto f : mesh.faces())
     {
+        MESH_CHECK_THROW_CANCEL(mesh)
         const unsigned int v = mesh.valence(f);
         nt += v == 3 ? 1 : v;
     }
@@ -330,10 +331,13 @@ void setup_divmass_matrix(const SurfaceMesh& mesh, DiagonalMatrix& M)
 
     for (Face f : mesh.faces())
     {
+        MESH_CHECK_THROW_CANCEL(mesh)
+
         // collect polygon vertices
         vertices.clear();
         for (Vertex v : mesh.vertices(f))
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             vertices.push_back(v);
         }
         const int n = vertices.size();
@@ -342,6 +346,7 @@ void setup_divmass_matrix(const SurfaceMesh& mesh, DiagonalMatrix& M)
         polygon.resize(n, 3);
         for (int i = 0; i < n; ++i)
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             polygon.row(i) = (Eigen::Vector3d)mesh.position(vertices[i]);
         }
 
@@ -365,6 +370,7 @@ void setup_divmass_matrix(const SurfaceMesh& mesh, DiagonalMatrix& M)
 
             for (int i = 0; i < n; ++i)
             {
+                MESH_CHECK_THROW_CANCEL(mesh)
                 const double area =
                     triarea(polygon.row(i), polygon.row((i + 1) % n), vvertex);
 
@@ -439,6 +445,7 @@ void setup_uniform_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L)
         Scalar sum_weights = 0.0;
         for (auto vj : mesh.vertices(vi))
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             sum_weights += 1.0;
             triplets.emplace_back(vi.idx(), vj.idx(), 1.0);
         }
@@ -466,6 +473,7 @@ void setup_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L, bool clamp)
         vertices.clear();
         for (Vertex v : mesh.vertices(f))
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             vertices.push_back(v);
         }
         const int n = vertices.size();
@@ -474,6 +482,7 @@ void setup_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L, bool clamp)
         polygon.resize(n, 3);
         for (int i = 0; i < n; ++i)
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             polygon.row(i) = (Eigen::Vector3d)mesh.position(vertices[i]);
         }
 
@@ -485,6 +494,7 @@ void setup_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L, bool clamp)
         {
             for (int k = 0; k < n; ++k)
             {
+                MESH_CHECK_THROW_CANCEL(mesh)
                 triplets.emplace_back(vertices[k].idx(), vertices[j].idx(),
                                       -Lpoly(k, j));
             }
@@ -504,6 +514,7 @@ void setup_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L, bool clamp)
 
             for (SparseMatrix::InnerIterator iter(L, k); iter; ++iter)
             {
+                MESH_CHECK_THROW_CANCEL(mesh)
                 if (iter.row() != iter.col() && iter.value() < 0.0)
                 {
                     diag_offset += -iter.value();
@@ -512,6 +523,7 @@ void setup_laplace_matrix(const SurfaceMesh& mesh, SparseMatrix& L, bool clamp)
             }
             for (SparseMatrix::InnerIterator iter(L, k); iter; ++iter)
             {
+                MESH_CHECK_THROW_CANCEL(mesh)
                 if (iter.row() == iter.col() && iter.value() < 0.0)
                     iter.valueRef() -= diag_offset;
             }
@@ -528,6 +540,7 @@ void setup_gradient_matrix(const SurfaceMesh& mesh, SparseMatrix& G)
     unsigned int nt = 0;
     for (auto f : mesh.faces())
     {
+        MESH_CHECK_THROW_CANCEL(mesh)
         const unsigned int v = mesh.valence(f);
         nt += v == 3 ? 1 : v;
     }
@@ -543,10 +556,13 @@ void setup_gradient_matrix(const SurfaceMesh& mesh, SparseMatrix& G)
 
     for (Face f : mesh.faces())
     {
+        MESH_CHECK_THROW_CANCEL(mesh)
+
         // collect polygon vertices
         vertices.clear();
         for (Vertex v : mesh.vertices(f))
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             vertices.push_back(v);
         }
         const int n = vertices.size();
@@ -555,6 +571,7 @@ void setup_gradient_matrix(const SurfaceMesh& mesh, SparseMatrix& G)
         polygon.resize(n, 3);
         for (int i = 0; i < n; ++i)
         {
+            MESH_CHECK_THROW_CANCEL(mesh)
             polygon.row(i) = (Eigen::Vector3d)mesh.position(vertices[i]);
         }
 
@@ -566,6 +583,7 @@ void setup_gradient_matrix(const SurfaceMesh& mesh, SparseMatrix& G)
         {
             for (int i = 0; i < Gpoly.rows(); ++i)
             {
+                MESH_CHECK_THROW_CANCEL(mesh)
                 triplets.emplace_back(n_rows + i, vertices[j].idx(),
                                       Gpoly(i, j));
             }
@@ -592,15 +610,19 @@ void setup_divergence_matrix(const SurfaceMesh& mesh, SparseMatrix& D)
 void coordinates_to_matrix(const SurfaceMesh& mesh, DenseMatrix& X)
 {
     X.resize(mesh.n_vertices(), 3);
-    for (auto v : mesh.vertices())
+    for (auto v : mesh.vertices()) {
+        MESH_CHECK_THROW_CANCEL(mesh)
         X.row(v.idx()) = static_cast<Eigen::Vector3d>(mesh.position(v));
+    }
 }
 
 void matrix_to_coordinates(const DenseMatrix& X, SurfaceMesh& mesh)
 {
     assert((size_t)X.rows() == mesh.n_vertices() && X.cols() == 3);
-    for (auto v : mesh.vertices())
+    for (auto v : mesh.vertices()) {
+        MESH_CHECK_THROW_CANCEL(mesh)
         mesh.position(v) = X.row(v.idx());
+    }
 }
 
 } // namespace pmp
